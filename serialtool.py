@@ -16,8 +16,10 @@ from PyQt5.QtGui import *
 from PyQt5.QtWidgets import *
 
 class MyTextEdit(QTextEdit):
+	newtext = pyqtSignal(str, int)
 	def __init__(self, parent = None):
 		QTextEdit.__init__(self, parent)
+		self.newtext.connect(self.append_text)
 
 	def contextMenuEvent(self, event):
 		menu = QMenu(self)
@@ -50,11 +52,34 @@ class MyTextEdit(QTextEdit):
 				asciiArray.append('.')
 			else:
 				asciiArray.append(tmp)
-		
+
 		self.append(''.join(asciiArray))
 		self.moveCursor(QTextCursor.End)
 		#QMessageBox.information(self, 'ASCII', ''.join(asciiArray))
 
+	def append_text(self, text, colorHint):
+		self.setFontPointSize(10)
+		self.setFontWeight(QFont.Bold)
+
+		if colorHint == 0:
+			#green
+			self.setTextColor(QColor('green'))
+			self.append(text)
+			self.setTextColor(QColor('grey'))
+			self.append('.'*80)
+
+		elif colorHint == 1:
+			#black
+			self.setTextColor(QColor('blue'))
+			self.append(text)
+		elif colorHint == 2:
+			#red
+			self.setTextColor(QColor('red'))
+			self.append(text)
+			self.setTextColor(QColor('grey'))
+			self.append('.'*80)
+
+		self.moveCursor(QTextCursor.End)
 
 class SerialWindow(QMainWindow):
 	def __init__(self, logger = None, parent=None):
@@ -78,43 +103,28 @@ class SerialWindow(QMainWindow):
 		if self.timeEnable.isChecked():
 			text = datetime.now().strftime('[%Y-%m-%d %H:%M:%S.%f] ') + text
 
-		self.displayPanel.setFontPointSize(10)
-		self.displayPanel.setFontWeight(QFont.Bold)
-		
-		if colorHint == 0:
-			#green
-			self.displayPanel.setTextColor(QColor('green'))
-			self.displayPanel.append(text)
-			self.displayPanel.setTextColor(QColor('grey'))
-			self.displayPanel.append('.'*80)
-
-		elif colorHint == 1:
-			#black
-			self.displayPanel.setTextColor(QColor('blue'))
-			self.displayPanel.append(text)
-		elif colorHint == 2:
-			#red
-			self.displayPanel.setTextColor(QColor('red'))
-			self.displayPanel.append(text)
-			self.displayPanel.setTextColor(QColor('grey'))
-			self.displayPanel.append('.'*80)
-
-		self.displayPanel.moveCursor(QTextCursor.End)
+		self.displayPanel.newtext.emit(text, colorHint)
 
 	def baud_changed(self, index):
 		self.baudrate = self.baudrateList[index]
 
 	def read_serial_port(self):
 		while self.portOpen == True:
-			dataToRead = self.ser.in_waiting
-			if 0 == dataToRead:
+		#serial port may lose even before portOpen flag is set
+			if self.ser is None:
 				time.sleep(1)
+				continue
+
+			ret = b''
+			while self.ser.in_waiting > 0:
+				ret += self.ser.read(self.ser.in_waiting)
+
+			if self.asciiRead == True:
+				self.show_text(ret.decode('utf-8'), 0)
 			else:
-				ret = self.ser.read(dataToRead)
-				if self.asciiRead == True:
-					self.show_text(ret.decode('utf-8'), 0)
-				else:
-					self.show_text(self.bytes_str(ret), 0)
+				self.show_text(self.bytes_str(ret), 0)
+
+			time.sleep(1)
 
 		if None != self.ser:
 			#close serial port
@@ -147,22 +157,22 @@ class SerialWindow(QMainWindow):
 				readThread.start()
 
 		except StopIteration as iterError:
-			print("Error: ", iterError)
+			self.logger.error("Error: %s ", str(iterError))
 		except Exception as e:
-			print("Error: ", e)
+			self.logger.error("Error: %s", str(e))
 
 	def hex_bytes(self, text):
 		ret = []
 		count = 0
 		value = 0
 		for index in range(0, len(text)):
-			
+
 			if text[index] != ' ' and text[index] != '\n':
-				
+
 				if count == 0:
 					value = int(text[index], 16)
 					count = 1
-				
+
 				elif count == 1:
 					value <<= 4
 					value |= int(text[index], 16)
@@ -225,7 +235,7 @@ class SerialWindow(QMainWindow):
 			button = QPushButton(key, self.table)
 			self.table.insertRow(self.table.rowCount())
 			self.table.setCellWidget(self.table.rowCount() - 1, 0, button)
-					
+
 			button.clicked.connect(self.send_out_shortcut)
 			self.shortCuts[key] = config['shortcuts'][key]
 
@@ -249,11 +259,11 @@ class SerialWindow(QMainWindow):
 						self.portOpen = False
 						self.portSelect.setCurrentIndex(0)
 						self.show_text('Serial ports changed', 2)
-					
+
 				except Exception as e:
 					self.portOpen = False
 					#nothing need to do
-					pass				
+					pass
 
 			time.sleep(2)
 
@@ -291,12 +301,12 @@ class SerialWindow(QMainWindow):
 			self.shortCuts = newShortCuts.copy()
 
 		except Exception as e:
-			QMessageBox.critical(self, 'Error', str(e))
+			self.logger.error("error: %s", str(e))
 
 	def setup_window(self):
 		window = QWidget()
 		window.setWindowTitle('Serial Port Tool')
-	
+
 		windowLayout = QHBoxLayout()
 		leftGroup = QGroupBox("Operation area")
 		leftGroup.setFixedWidth(800)
@@ -304,30 +314,30 @@ class SerialWindow(QMainWindow):
 
 		windowLayout.addWidget(leftGroup)
 		windowLayout.addWidget(self.rightGroup)
-	
+
 		leftGroupLayout = QHBoxLayout()
 		inputGroup = QGroupBox()
 		inputGroup.setFixedWidth(800)
-	
+
 		inputGroupLayout = QVBoxLayout()
-	
+
 		serialSetGroup = QGroupBox(parent = inputGroup)
 		serialSetGroup.setFixedWidth(670)
 		serialSetGroupLayout = QGridLayout()
 		portLabel = QLabel('Port')
-	
+
 		portLabel.setAlignment(Qt.AlignLeft | Qt.AlignCenter)
 		serialSetGroupLayout.addWidget(portLabel, 0, 1, 1, 1)
 		self.portSelect = QComboBox()
 		self.portSelect.setSizeAdjustPolicy(QComboBox.AdjustToContents)
-	
+
 		self.ports = list_ports.comports()
 		for i in range(0, len(self.ports)):
 			self.portSelect.addItem(self.ports[i].description)
-	
+
 		self.portSelect.currentIndexChanged.connect(self.port_changed)
 		serialSetGroupLayout.addWidget(self.portSelect, 0, 2)
-	
+
 		baudLabel = QLabel('Baudrate')
 		serialSetGroupLayout.addWidget(baudLabel, 0, 3)
 		baudSelect = QComboBox()
@@ -335,27 +345,27 @@ class SerialWindow(QMainWindow):
 		baudSelect.addItems(self.baudrateList)
 		baudSelect.currentIndexChanged.connect(self.baud_changed)
 		serialSetGroupLayout.addWidget(baudSelect, 0, 4)
-	
+
 		self.openButton = QPushButton('OPEN')
 		serialSetGroupLayout.addWidget(self.openButton, 0, 5)
 		self.openButton.clicked.connect(self.open_serial_port)
-	
+
 		serialSetGroup.setLayout(serialSetGroupLayout)
 		inputGroupLayout.addWidget(serialSetGroup)
-	
+
 		self.displayPanel = MyTextEdit(parent = inputGroup)
 		self.displayPanel.setFixedWidth(670)
 		self.displayPanel.setReadOnly(True)
 		inputGroupLayout.addWidget(self.displayPanel)
-	
+
 		self.sendBuffer = QLineEdit()
 		self.sendBuffer.setFixedWidth(670)
 		self.sendBuffer.returnPressed.connect(self.send_out)
 		inputGroupLayout.addWidget(self.sendBuffer)
-	
+
 		inputGroup.setLayout(inputGroupLayout)
 		leftGroupLayout.addWidget(inputGroup)
-	
+
 		inputBtnGroup = QGroupBox()
 		inputBtnGroupLayout = QVBoxLayout()
 		self.clearButton = QPushButton('Clear')
@@ -370,12 +380,12 @@ class SerialWindow(QMainWindow):
 		addCfgButton = QPushButton('Add shotcuts')
 		addCfgButton.clicked.connect(self.add_config_item)
 		inputBtnGroupLayout.addWidget(addCfgButton)
-	
+
 		inputBtnGroup.setLayout(inputBtnGroupLayout)
 		leftGroupLayout.addWidget(inputBtnGroup)
-	
+
 		leftGroup.setLayout(leftGroupLayout)
-	
+
 		self.rightGroupLayout = QVBoxLayout()
 		self.table = QTableWidget()
 		self.table.horizontalHeader().setVisible(False)
@@ -385,12 +395,12 @@ class SerialWindow(QMainWindow):
 		self.rightGroupLayout.addWidget(self.table)
 		self.set_shortcuts()
 		self.rightGroup.setLayout(self.rightGroupLayout)
-	
+
 		window.setLayout(windowLayout)
-		
+
 		self.setCentralWidget(window)
 		self.statusBar().showMessage('Report bug to itzyx@qq.com')
-		
+
 		comCheck = threading.Thread(target=self.check_serial_port)
 		self.serial_check_run = True
 		comCheck.start()
